@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <time.h>
+#include<math.h>
 
 
 //prozesuaren informazioa
@@ -109,7 +110,7 @@ struct PCB listaHartu(process_queue *q){
     return pro;
 }
 
-void listaLehentasunakIgo(process_queue *q){//bakoitzari lehentasuna igotzen zaio.+1. Maximoa 200.
+void listaLehentasunakIgo(process_queue *q){//bakoitzari lehentasuna igotzen zaio.+1. Maximoa 200. Horrela badakit prozesu bat ez dela exekutatu gabe geratuko.
     node *begiratu;
     begiratu = malloc(sizeof(node));
     begiratu = q->aurrena;
@@ -124,6 +125,7 @@ void listaLehentasunakIgo(process_queue *q){//bakoitzari lehentasuna igotzen zai
 //ALDAGAI GLOBALAK
 process_queue *q;//prozesuak sortzean process-generator-ek hemen utziko ditu.
 process_queue *coreak;
+process_queue *lis;//hemen gorde mugituko diren prozesuak
 //denbora kontrolatzeko
 int tik;
 int corekop;//zenbat kore dituen ordenagailuak.
@@ -132,6 +134,7 @@ int quantum;//prozezu bakoitzeko denbora
 //mutex-ak
 pthread_mutex_t kont_tik;
 pthread_mutex_t beg_Sche;
+pthread_mutex_t kont_core;
 //funtzioak
 void sortu_hariak(int maiz);
 void *clocka (void *hari_param);
@@ -139,8 +142,53 @@ void *timera (void *hari_param);
 void *process_generator(void *hari_param);
 void *scheduler_Dispatcher(void *hari_param);
 void *core(void *hari_param);
+void *oreka(void *hari_param);
 
+void orekatu(){
+    printf("kaixo");
+    struct PCB pro;
+    //prozesuen batez bestekoa kalkulatu
+    float batezBes=0;
+    pthread_mutex_lock(&kont_core);//ez da soluzio onena baina ez dakit core bakoitzeko mutex bat sortzen. Hau da ezin ditut coreak independenteki gelditu. Batek beste guztiak geratuko ditu.
+    for(int i=0;i<corekop;i++){
+        batezBes=+coreak[i].zenbat;
+    }
+    batezBes=batezBes/corekop;
+    batezBes=floor(batezBes);//beheraka biribildu beti sobran ibiltzeko.
+    int zenMug;//zenbat mugitu bati jakiteko
+    //aurrena prozesuak hartu batezBest baina gehiago dutenei
+    for(int j=0;j<corekop;j++){
+        if(coreak[j].zenbat>batezBes){
+            zenMug=coreak[j].zenbat-batezBes;
+            while(zenMug!=0){
+                pro=listaHartu(&coreak[j]);
+                listaSartu(lis,pro);
+                zenMug--;
+            }
+        }
+    }
+    //ondoren prozesuak jarri denak berdin egoteko
+    for(int z=0;z<corekop;z++){
+        if(coreak[z].zenbat<batezBes){
+            zenMug=batezBes-coreak[z].zenbat;
+            while(zenMug!=0){
+                pro=listaHartu(lis);
+                listaSartu(lis,pro);
+                zenMug--;
+            }
+        }
+    }
+    //sobratzen direnak sartu. Errorea batekoa izango da gehienez
+    int non=0;
+    while(!listaHutsa(lis)){
+        pro=listaHartu(lis);
+        listaSartu(&coreak[non],pro);
+        non++;
 
+    }
+    pthread_mutex_unlock(&kont_core);
+
+}
 void sortu_hariak(int maiz){//clock, timer, process generator, Schedule Dispatcher
 
     int i, err, hari_kop;
@@ -208,6 +256,18 @@ void sortu_hariak(int maiz){//clock, timer, process generator, Schedule Dispatch
             exit(1);
         }
     }
+
+    //orekatzen duen haria sortu
+     pthread_t orekatu_haria;
+     err = pthread_create(&orekatu_haria, NULL, oreka, &c_p[0]);
+
+    if(err > 0){
+        fprintf(stderr, "Errore bat gertatu da orekatu haria sortzean.\n");
+        exit(1);
+    }
+    //joain egin orekatu hariak
+    pthread_join(orekatu_haria, NULL);
+
     //coreak
      for(int z = 0;z < corekop;z++)
         pthread_join(core_thread[z], NULL);
@@ -266,7 +326,7 @@ void *process_generator(void *hari_param){
               listaSartu(q,P);
               pthread_mutex_unlock(&beg_Sche);
     		  i++;
-    		  listaInprimatu(q);
+    		  //listaInprimatu(q);
     	}
         }
     }
@@ -306,24 +366,50 @@ void *core(void *hari_param){
                 semaforoa=mug;
                 kont++;
                 if(kont==quantum){
-                    if(coreak[id].aurrena->balioa.x_denb>quantum){//kenketa egin denbora gehiago behar badu
-                        coreak[id].aurrena->balioa.x_denb=-quantum;
+                    if(pro.x_denb>quantum){//kenketa egin denbora gehiago behar badu
+                        pro.x_denb=-quantum;
+                        pthread_mutex_lock(&kont_core);
                         listaSartu(&coreak[id],pro);
+                        pthread_mutex_unlock(&kont_core);
                     }
+                    pthread_mutex_lock(&kont_core);
                     listaLehentasunakIgo(&coreak[id]);//geldirik zeudenei lehentsunak igo
+                    pthread_mutex_unlock(&kont_core);
                     prozesatzen=0;//ez dago inor prozesatzen, hurrengo itzulian hartuko du bat.
                 }
             }
-            else{//hau milisegunduro egiten da. Linuxekoak bezala. Corea geldirik badago milisegunduro begiratzen du
+            else{//hau milisegunduro egiten da. Linuxekoak bezala. Corea geldirik badago milisegunduro orekatzen da.
                 if(!listaHutsa(&coreak[id])){//begiratu prozesurik badagoen hartzeko
-                    pro=listaHartu(&coreak[id]);
-                    pro.ego='X';//egoera aldatu
-                    prozesatzen=1;//suposatzen da lehenengoa hartu duela. Lehentasunaren arabera ordenatuak daudelako
+                    pthread_mutex_lock(&kont_core);
+                    if(!listaHutsa(&coreak[id])){
+                        pro=listaHartu(&coreak[id]);
+                        pro.ego='X';//egoera aldatu
+                        prozesatzen=1;//suposatzen da lehenengoa hartu duela. Lehentasunaren arabera ordenatuak daudelako
+                    }
+                    pthread_mutex_unlock(&kont_core);
+                }
+                else{
+                    orekatu();
                 }
             }
         }
     }    
 }   
+//200milisegunduro, quantum-ero, orekatu egiten ditu coretako ilarak.
+void *oreka(void *hari_param){
+    int semaforoa=0;//0 eta 1 balioak hartuko ditu. Kontatzeko erabiltzen da
+    int kont;
+    while(1){
+        kont=0;
+        if(semaforoa!=mug){
+            kont++;
+            if(kont==quantum){
+                orekatu();
+                kont=0;
+            }
+        }
+    }
+}
 
 int main(int argc, char *argv[]){
 	
@@ -333,12 +419,14 @@ int main(int argc, char *argv[]){
 		printf("maiztasuna bakarrik sartu behar da\n");
 		exit(1);
 	}
-
+    //orekatu metodoarentzako lista bat
+    lis=malloc(sizeof(process_queue));
+    listaHasieratu(lis);
     //quantumaren balioa eman. Linuxen bezala 200 jarriko dut
     quantum=200;
     //suposatuko dugu 3 core dituela gure ordenagailuak. Agindua sistema operatibo bakoitzero desberdina delako.
     //gehiago hartzen baditut arazoak ematen dizkit ordenagailuak.
-    corekop = 3;
+    corekop = 2;
     //listak hasieratu
     q=malloc(sizeof(process_queue));
     coreak=malloc(corekop*sizeof(process_queue));
@@ -348,6 +436,7 @@ int main(int argc, char *argv[]){
     //mutexak sortu
     pthread_mutex_init(&kont_tik, NULL);
     pthread_mutex_init(&beg_Sche,NULL);
+    pthread_mutex_init(&kont_core,NULL);
     //Process_Queue sortu
     listaHasieratu(q);
     //maiztasuna hartu
@@ -357,6 +446,7 @@ int main(int argc, char *argv[]){
     //programa bukatzean aldagaia borratu
     pthread_mutex_destroy(&kont_tik);
     pthread_mutex_destroy(&beg_Sche);
+    pthread_mutex_destroy(&kont_core);
     //programa bukatzean Queue borratu
     //askQueue(&p);
 }
