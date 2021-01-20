@@ -48,6 +48,7 @@ void *core(void *hari_param){
                     	}
 
                     }
+					bukatua=0;
                     pthread_mutex_lock(&kont_core);
                     pro.ego='I';
                     listaLehentasunakIgo(&coreak[id]);//geldirik zeudenei lehentsunak igo
