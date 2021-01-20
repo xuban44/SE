@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <time.h>
-#include<math.h>
+#include <math.h>
+#include <unistd.h>
 
 //memoriako 
 struct Datua{
@@ -151,8 +152,11 @@ void listaLehentasunakIgo(process_queue *q){//bakoitzari lehentasuna igotzen zai
 process_queue *q;//prozesuak sortzean process-generator-ek hemen utziko ditu.
 process_queue *coreak; //coreak
 Datua *memoriaNagusia; //memoria nagusia
-Datua *memoriaBirtuala; //memoria nagusia
 Helbidea *pageTable; //Page table
+int *bitMapaMemoria;
+Helbidea *TLB1;//TLB. helbideak gordetzeko.
+Helbidea *TLB2;//TLB. helbideak gordetzeko. aurreko helbidearen itzulpena
+int *bitMapaTLB;
 
 //process_queue *lis;//hemen gorde mugituko diren prozesuak
 //denbora kontrolatzeko
@@ -162,12 +166,12 @@ int mug=0;//0 edo 1 balioak izango du.
 int quantum;//prozezu bakoitzeko denbora
 int memoria;//zenbateko memoria edukiko duen
 int memNon=0;//memoria nagusian non sartu jakiteko
+int luzeraTLB;
 
 //mutex-ak
 pthread_mutex_t kont_tik;
 pthread_mutex_t beg_Sche;
 pthread_mutex_t kont_core;
-pthread_mutex_t sartuMem;
 //funtzioak
 void sortu_hariak(int maiz);
 void *clocka (void *hari_param);
@@ -176,8 +180,8 @@ void *loader(void *hari_param);
 void *scheduler_Dispatcher(void *hari_param);
 void *core(void *hari_param);
 void *oreka(void *hari_param);
-void MMU();
-void TLB();
+Helbidea MMU(Helbidea hel);
+Helbidea TLB(Helbidea hel);
 
 void orekatu(){
     process_queue *lis;//hemen gorde mugituko diren prozesuak
@@ -359,12 +363,13 @@ void *loader(void *hari_param){
     int zenbakia;
     struct PCB P;//prozesua sortzeko
     int i=0;//zenbatgarren prozesua den jakiteko
-    int non=0;//memoria birtualean non sartu jakiteko
+    int non;//memoria birtualean non sartu jakiteko
     char randomletter;//datua ordez char bat sartuko da ranbom eginez
     Helbidea hel; //helbidea
     Datua dat; //datua
     mm memoManag; //memory management
     int offset; //luzera jakiteko
+    int aurkitua;//aldagai laguntzaile bat
     while(1){
         if(q->zenbat<1000){//aldioro 1000 prozesu baino gehiago ez eduki. Memoria kontrolatzeko eta ez betetzeko.
         	zenbakia = rand() % 100000;// %0,001 eko probabilitadea jarri dut
@@ -377,55 +382,50 @@ void *loader(void *hari_param){
               	//memory management-eko datuak sortu
               	//nik hauek random-ekin sortzen ditut eta ez ditut irakurtzen
               	//datuak sortu memoria birtualean eta helbidea gorde.
-              	offset=(random() % 5) + 1 ;
+              	offset=5;//denak 5-eko luzera edukiko dute
+              	//zer posiziotan jarri jakiteko
+              	aurkitua=0;
+              	while(aurkitua==0){//betea dagoen bitartean itxaron
+              	for(int j=0;j<memoria/offset;j++){
+              			if(bitMapaMemoria[j]==0){
+              				non=j;
+              				aurkitua=1;
+              			}
+              		}
+              	}
               	hel.h=non;//helbidea sortu
               	for(int i=0; i<offset;i++){
               		randomletter = 'A' + (random() % 26);
               		dat.d=randomletter;//datua sortu
-              		memoriaBirtuala[non] = dat;//memorian sartu datuak
-              		//non++ kontrolatu maximoa ez pasatzea
-              		if (non>=memoria){
-              			non=0;
-              		}else{
-              			non++;
-              		}
+              		memoriaNagusia[non] = dat;//memorian sartu datuak
               	}
               	memoManag.data=hel;//helbidea gorde
               	memoManag.offsetD=offset;//helbidea gorde
 
-              	 //non++ egiterakona kontuz. ezin da memoria baina handiagoa izan
-              	if (non>=memoria){
-              		non=0;
-              	}else{
-              		non++;
-              	}
-
               	//codeak sortu memoria birtualean eta helbidea gorde
-              	offset=(random() % 5) + 1 ;
+              	aurkitua=0;
+              	while(aurkitua==0){//betea dagoen bitartean itxaron
+              	for(int j=0;j<memoria/offset;j++){
+              			if(bitMapaMemoria[j]==0){
+              				non=j;
+              				aurkitua=1;
+              			}
+              		}
+              	}
               	hel.h=non;//helbidea sortu
               	for(int i=0; i<offset;i++){
               		randomletter = 'A' + (random() % 26);
               		dat.d=randomletter;//codea sortu
-              		memoriaBirtuala[non] = dat;//memorian sartu codea
-              		//non++ kontrolatu maximoa ez pasatzea
-              		if (non>=memoria){
-              			non=0;
-              		}else{
-              			non++;
-              		}
+              		memoriaNagusia[non] = dat;//memorian sartu codea
               	}
               	memoManag.code=hel;//helbidea gorde
               	memoManag.offsetC=offset;//helbidea gorde
 
-              	if (non>=memoria){
-              		non=0;
-              	}else{
-              		non++;
-              	}
-
               	//orri taula aldatu
-              	pageTable[memoMana.data]=
-              	pageTable[memoMana.code]=
+              	hel.h = memoManag.data.h*5;
+              	pageTable[memoManag.data.h]=hel;
+              	hel.h = memoManag.code.h*5;
+              	pageTable[memoManag.code.h]=hel;
               	//pgb sartu prozesuan
               	memoManag.pgb=&pageTable;
 
@@ -509,6 +509,23 @@ void *core(void *hari_param){
                     pro.ego='I';
                     listaLehentasunakIgo(&coreak[id]);//geldirik zeudenei lehentsunak igo
                     pthread_mutex_unlock(&kont_core);
+                    //exekutatu
+                    //aurrena datuak
+                    //begiratu zein den helbide fisikoa
+                    PC=MMU(pro.memoMana.data);
+                    luzera=pro.memoMana.offsetD;
+                    for(int z=0; z<luzera; z++){
+                    	IR=memoriaNagusia[PC.h+z];
+                    	//suposatzen da emen exekutatu egiten dituela prozesuak
+                    }
+                    //ondoren kodea
+                    //begiratu zein den helbide fisikoa
+                    PC=MMU(pro.memoMana.code);
+                    luzera=pro.memoMana.offsetC;
+                    for(int k=0; k<luzera; k++){
+                    	IR=memoriaNagusia[PC.h+k];
+                    	//suposatzen da emen exekutatu egiten dituela prozesuak
+                    }
                     prozesatzen=0;//ez dago inor prozesatzen, hurrengo itzulian hartuko du bat.
                 }
             }
@@ -523,37 +540,6 @@ void *core(void *hari_param){
                     pthread_mutex_unlock(&kont_core);
 
                     PTBR=pro.memoMana.pgb;
-                    //datuak memoria nagusian sartu
-                    PC=pro.memoMana.data;
-                    luzera=pro.memoMana.offsetD;
-                    pthread_mutex_lock(&sartuMem);
-                    i=0;
-                    while(i<luzera){
-                    	IR=memoriaBirtuala[PC.h+i];
-                        memoriaNagusia[memNon]= IR;
-                        if (memNon>=memoria){
-              				i=0;
-              			}else{
-              				i++;
-              			}
-                    }
-                    pthread_mutex_unlock(&sartuMem);
-
-                    //kodea memoria nagusian sartu
-                    PC=pro.memoMana.code;
-                    luzera=pro.memoMana.offsetC;
-                    pthread_mutex_lock(&sartuMem);
-                    i=0;
-                    while(i<luzera){
-                    	IR=memoriaBirtuala[PC.h+i];
-                        memoriaNagusia[memNon]= IR;
-                        if (memNon>=memoria){
-              				i=0;
-              			}else{
-              				i++;
-              			}
-                    }
-
                 }
                 else{//hau milisegunduro egiten da. Linuxekoak bezala. Corea geldirik badago milisegunduro orekatzen da.
                     orekatu();
@@ -578,8 +564,25 @@ void *oreka(void *hari_param){
     }
 }
 
-void MMU(){}
-void TLB(){}
+Helbidea MMU(Helbidea hel){
+	return TLB(hel);
+}
+Helbidea TLB(Helbidea hel){//hemengo memoria 6koa egingo dut. Gardekinetan agertzen den bezala
+	int aur=0; //badagoen ala ez jakiteko
+	for(int i=0;i<luzeraTLB;i++){
+		if(bitMapaTLB[i]==1){
+			if(TLB1[i].h==hel.h){
+				return TLB2[i];
+			}
+
+		}
+	}
+	//ez badago TLB-an pageTAble-an begiratu eta TLB-an sartu. Ausaz batengatik ordezkatu.
+	int kendu = random() % luzeraTLB;
+	TLB1[kendu]=hel;
+	TLB2[kendu]=pageTable[hel.h];
+	return pageTable[hel.h];
+}
 
 
 int main(int argc, char *argv[]){
@@ -589,7 +592,7 @@ int main(int argc, char *argv[]){
 	char *e;
   	int maiztasuna;
   	int tamPageTable;
-  	if(argc!=4){
+  	if(argc!=3){
     	printf("maiztasuna eta core kopurua sartu behar dira\n");
     	exit(1);
   	}
@@ -599,14 +602,22 @@ int main(int argc, char *argv[]){
     //aldagaiak hartu. maiztasuna eta kore kopurua.
     maiztasuna = strtol(argv[1], &c, 10);
     corekop = strtol(argv[2], &d, 10);
-    memoria = strtol(argv[2], &e, 10);
+    //memoria. 100 erabiliko da.
+    memoria=1000;
     //memoria nagusia sortu
     memoriaNagusia = malloc(memoria*sizeof(Datua));
-    //memoria birtuala sortu
-    memoriaBirtuala = malloc(memoria*sizeof(Datua));
+    //memoria nagusiaren bit mapa.bostnaka doazenez memoria/5
+    int bitMapaTam = memoria/5;
+    bitMapaMemoria = malloc(bitMapaTam*sizeof(int));
+    //TLB sortu. Helbideak gordetzeko. 6-ko luzera izango du.2 TLB birtualekin eta fisikoekin
+    luzeraTLB = 6;
+    TLB1 = malloc(luzeraTLB*sizeof(Helbidea));
+    TLB2 = malloc(luzeraTLB*sizeof(Helbidea));
+    //bit mapa sortu TLB-rako.
+    bitMapaTLB = malloc(luzeraTLB*sizeof(int));
     //Page Table sortu. Bakoitietan birtualak eta bikoitietan fisikoak
-    tamPageTable = memoria*2;
-    pageTable = malloc(tamPageTable*2*sizeof(Helbidea));
+    tamPageTable = memoria/5;
+    pageTable = malloc(tamPageTable*sizeof(Helbidea));
     //listak hasieratu
     q=malloc(sizeof(process_queue));
     coreak=malloc(corekop*sizeof(process_queue));
@@ -617,7 +628,6 @@ int main(int argc, char *argv[]){
     pthread_mutex_init(&kont_tik, NULL);
     pthread_mutex_init(&beg_Sche,NULL);
     pthread_mutex_init(&kont_core,NULL);
-    pthread_mutex_init(&sartuMem,NULL);
     //Process_Queue sortu
     listaHasieratu(q);
     //hariask sortu
@@ -626,7 +636,6 @@ int main(int argc, char *argv[]){
     pthread_mutex_destroy(&kont_tik);
     pthread_mutex_destroy(&beg_Sche);
     pthread_mutex_destroy(&kont_core);
-    pthread_mutex_destroy(&sartuMem);
     //programa bukatzean Queue borratu
     //askQueue(&p);
 }
