@@ -18,6 +18,7 @@ void *core(void *hari_param){
     int prozesatzen=0;//lanean ari den ala ez jakiteko
     int luzera;//jakiteko kodea eta datuen luzera memorian
     int i;//aldagai laguntzaile bat
+    int bukatua=0;//bukatu duen prozesua ala ez jakiteko
 
     while(1){
         if(semaforoa!=mug){//maiztasuna betetzean begiratu
@@ -34,6 +35,18 @@ void *core(void *hari_param){
                         pthread_mutex_lock(&kont_core);
                         listaSartu(&coreak[id],pro);
                         pthread_mutex_unlock(&kont_core);
+                        bukatua=1;
+                    }
+                    //bukatzean TLB-tik borratu eta memoria nagusitik
+                    if(bukatua==1){
+                    	bitMapaTLB[pro.memoMana.code.h]=0;
+                    	bitMapaTLB[pro.memoMana.data.h]=0;
+                    	//memoria nagusitik borratu
+                    	for(int j=0; j<5;j++){
+                    		bitMapaMemoria[pro.memoMana.code.h+j]=0;
+                    		bitMapaMemoria[pro.memoMana.data.h+j]=0;
+                    	}
+
                     }
                     pthread_mutex_lock(&kont_core);
                     pro.ego='I';

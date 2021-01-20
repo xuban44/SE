@@ -41,6 +41,7 @@ void *loader(void *hari_param){
                   randomletter = 'A' + (random() % 26);
                   dat.d=randomletter;//datua sortu
                   memoriaNagusia[non] = dat;//memorian sartu datuak
+                  bitMapaMemoria[non] = 0;
                 }
                 memoManag.data=hel;//helbidea gorde
                 memoManag.offsetD=offset;//helbidea gorde
@@ -60,6 +61,7 @@ void *loader(void *hari_param){
                   randomletter = 'A' + (random() % 26);
                   dat.d=randomletter;//codea sortu
                   memoriaNagusia[non] = dat;//memorian sartu codea
+                  bitMapaMemoria[non] = 0;
                 }
                 memoManag.code=hel;//helbidea gorde
                 memoManag.offsetC=offset;//helbidea gorde

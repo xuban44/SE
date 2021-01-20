@@ -188,12 +188,20 @@ int main(int argc, char *argv[]){
     //memoria nagusiaren bit mapa.bostnaka doazenez memoria/5
     int bitMapaTam = memoria/5;
     bitMapaMemoria = malloc(bitMapaTam*sizeof(int));
+    //hasieratu bit mapa
+    for(int i=0; i<bitMapaTam;i++){
+        bitMapaMemoria[i] =0;
+    }
     //TLB sortu. Helbideak gordetzeko. 6-ko luzera izango du.2 TLB birtualekin eta fisikoekin
     luzeraTLB = 6;
     TLB1 = malloc(luzeraTLB*sizeof(Helbidea));
     TLB2 = malloc(luzeraTLB*sizeof(Helbidea));
     //bit mapa sortu TLB-rako.
     bitMapaTLB = malloc(luzeraTLB*sizeof(int));
+    //hasieratu bit mapa
+    for(int i=0; i<luzeraTLB;i++){
+        bitMapaTLB[i] =0;
+    }
     //Page Table sortu. Bakoitietan birtualak eta bikoitietan fisikoak
     tamPageTable = memoria/5;
     pageTable = malloc(tamPageTable*sizeof(Helbidea));
