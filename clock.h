@@ -1,0 +1,1 @@
+void *clocka (void *hari_param);
